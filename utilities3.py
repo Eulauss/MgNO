@@ -20,6 +20,70 @@ from datetime import date, datetime
 
 from Adam import Adam
 
+_DATA_FILE_LAYOUT = {
+    ('darcy', 'train'): ('Darcy smooth', 'piececonst_r421_N1024_smooth1.mat'),
+    ('darcy', 'test'): ('Darcy smooth', 'piececonst_r421_N1024_smooth2.mat'),
+    ('darcy', 'val'): ('Darcy smooth', 'piececonst_r421_N1024_smooth2.mat'),
+    ('darcy20c6', 'train'): ('Darcy rough', 'darcy_alpha2_tau5_512_train.mat'),
+    ('darcy20c6', 'val'): ('Darcy rough', 'darcy_alpha2_tau5_512_train.mat'),
+    ('darcy20c6', 'test'): ('Darcy rough', 'darcy_alpha2_tau5_512_test.mat'),
+    ('darcy15c10', 'train'): (None, 'darcy_alpha2_tau15_c10_512_train.mat'),
+    ('darcy15c10', 'test'): (None, 'darcy_alpha2_tau15_c10_512_test.mat'),
+    ('a3f2', 'train'): (None, 'mul_res1023_a3f2_train.mat'),
+    ('a3f2', 'test'): (None, 'mul_res1023_a3f2_test.mat'),
+    ('a4f1', 'train'): ('Darcy multiscale', 'mul_tri_train.mat'),
+    ('a4f1', 'test'): ('Darcy multiscale', 'mul_tri_test.mat'),
+    ('a4f1', 'val'): ('Darcy multiscale', 'mul_tri_test.mat'),
+    ('darcyF', 'train'): (None, 'darcy_alpha2_tau9_512_F_train.mat'),
+    ('darcyF', 'val'): (None, 'darcy_alpha2_tau9_512_F_train.mat'),
+    ('darcyF', 'test'): (None, 'darcy_alpha2_tau9_512_F_test.mat'),
+    ('helm', 'x'): ('Helmholtz', 'Helmholtz_inputs.npy'),
+    ('helm', 'y'): ('Helmholtz', 'Helmholtz_outputs.npy'),
+    ('1e-5', None): ('Navier-Stokes', 'NavierStokes_V1e-5_N1200_T20.mat'),
+    ('1e-4', None): (None, 'ns_V1e-4_N10000_T30.mat'),
+    ('pipe', 'x'): ('Pipe', 'Pipe_X.npy'),
+    ('pipe', 'y'): ('Pipe', 'Pipe_Y.npy'),
+    ('pipe', 'q'): ('Pipe', 'Pipe_Q.npy'),
+}
+
+_EXPERIMENT_NAMES = {
+    'darcy': 'darcy_smooth',
+    'darcy20c6': 'darcy_rough',
+    'a4f1': 'darcy_multiscale',
+    'pipe': 'pipe',
+    'helm': 'helmholtz',
+    '1e-5': 'navier_stokes_1e-5',
+}
+
+
+def getDataRoot(data_root=None):
+    """Return the root directory used for benchmark data files."""
+    root = data_root or os.environ.get('MGNO_DATA_ROOT')
+    if root:
+        return os.path.abspath(os.path.expanduser(root))
+    return os.path.join(os.path.abspath(''), 'data')
+
+
+def _resolve_data_file(subdir, filename, data_root=None):
+    root = getDataRoot(data_root)
+    candidates = []
+    if subdir:
+        candidates.append(os.path.join(root, subdir, filename))
+    candidates.append(os.path.join(root, filename))
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+
+    if data_root or os.environ.get('MGNO_DATA_ROOT'):
+        return candidates[0]
+    return candidates[-1]
+
+
+def _default_experiment_name(data):
+    return _EXPERIMENT_NAMES.get(data, data)
+
+
 # ---------------------------------------------------------------------------
 # Data readers
 # ---------------------------------------------------------------------------
@@ -405,7 +469,7 @@ def count_params(model):
     """Returns the number of parameters of a PyTorch model"""
     return sum([p.numel()*2 if p.is_complex() else p.numel() for p in model.parameters()])
 
-def getPath(data, flag):
+def getPath(data, flag, data_root=None):
     """Return the file-system path for the requested dataset split.
 
     All datasets are expected to reside under a ``./data/`` directory relative
@@ -430,60 +494,17 @@ def getPath(data, flag):
     Raises:
         NameError: If *data* is not a recognised dataset identifier.
     """
-    data_dir = os.path.join(os.path.abspath(''), 'data')
-
-    if data == 'darcy':
-        if flag == 'train':
-            return os.path.join(data_dir, 'piececonst_r421_N1024_smooth1.mat')
+    key = (data, flag)
+    if key not in _DATA_FILE_LAYOUT:
+        if data == 'helm':
+            key = (data, 'y')
+        elif data in {'darcy15c10', 'a3f2'}:
+            key = (data, 'test')
         else:
-            return os.path.join(data_dir, 'piececonst_r421_N1024_smooth2.mat')
+            raise NameError(f"Invalid dataset name/flag '{data}', '{flag}'")
 
-    elif data == 'darcy20c6':
-        if flag in ('train', 'val'):
-            return os.path.join(data_dir, 'darcy_alpha2_tau5_512_train.mat')
-        elif flag == 'test':
-            return os.path.join(data_dir, 'darcy_alpha2_tau5_512_test.mat')
-        else:
-            raise NameError(f"Invalid flag '{flag}' for dataset '{data}'")
-
-    elif data == 'darcy15c10':
-        if flag == 'train':
-            return os.path.join(data_dir, 'darcy_alpha2_tau15_c10_512_train.mat')
-        else:
-            return os.path.join(data_dir, 'darcy_alpha2_tau15_c10_512_test.mat')
-
-    elif data == 'a3f2':
-        if flag == 'train':
-            return os.path.join(data_dir, 'mul_res1023_a3f2_train.mat')
-        else:
-            return os.path.join(data_dir, 'mul_res1023_a3f2_test.mat')
-
-    elif data == 'a4f1':
-        if flag == 'train':
-            return os.path.join(data_dir, 'mul_tri_train.mat')
-        else:
-            return os.path.join(data_dir, 'mul_tri_test.mat')
-
-    elif data == 'darcyF':
-        if flag in ('train', 'val'):
-            return os.path.join(data_dir, 'darcy_alpha2_tau9_512_F_train.mat')
-        else:
-            return os.path.join(data_dir, 'darcy_alpha2_tau9_512_F_test.mat')
-
-    elif data == 'helm':
-        if flag == 'x':
-            return os.path.join(data_dir, 'Helmholtz_inputs.npy')
-        else:
-            return os.path.join(data_dir, 'Helmholtz_outputs.npy')
-
-    elif data == '1e-5':
-        return os.path.join(data_dir, 'NavierStokes_V1e-5_N1200_T20.mat')
-
-    elif data == '1e-4':
-        return os.path.join(data_dir, 'ns_V1e-4_N10000_T30.mat')
-
-    else:
-        raise NameError(f"Invalid dataset name '{data}'")
+    subdir, filename = _DATA_FILE_LAYOUT[key]
+    return _resolve_data_file(subdir, filename, data_root=data_root)
 
 
 
@@ -528,7 +549,7 @@ def getDarcyDataSet(dataOpt, flag,
         When *return_normalizer* is True: ``(x, y, x_normalizer, y_normalizer)``
         Otherwise: ``(x, y)``
     """
-    PATH = getPath(dataOpt['data'], flag)
+    PATH = getPath(dataOpt['data'], flag, data_root=dataOpt.get('data_root'))
     r = dataOpt['sampling_rate']
     sample_idx = dataOpt['dataSize'][flag]
     GN = dataOpt['GN']
@@ -565,8 +586,8 @@ def getDarcyDataSet(dataOpt, flag,
 
 def getHelmDataset(dataOpt, return_normalizer=True, normalizer_type='PGN'):
 
-    PATH_X = getPath(dataOpt['data'], 'x')
-    PATH_Y = getPath(dataOpt['data'], 'y')
+    PATH_X = getPath(dataOpt['data'], 'x', data_root=dataOpt.get('data_root'))
+    PATH_Y = getPath(dataOpt['data'], 'y', data_root=dataOpt.get('data_root'))
     x = np.load(PATH_X)
     x = np.transpose(x, axes=[2, 0, 1])
     x = torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32))
@@ -623,10 +644,9 @@ def getPipeDataset(dataOpt):
                ``(n_samples, 2, s1, s2)`` for inputs and
                ``(n_samples, s1, s2)`` for outputs.
     """
-    data_dir = os.path.join(os.path.abspath(''), 'data')
-    INPUT_X = os.path.join(data_dir, 'Pipe_X.npy')
-    INPUT_Y = os.path.join(data_dir, 'Pipe_Y.npy')
-    OUTPUT_Sigma = os.path.join(data_dir, 'Pipe_Q.npy')
+    INPUT_X = getPath('pipe', 'x', data_root=dataOpt.get('data_root'))
+    INPUT_Y = getPath('pipe', 'y', data_root=dataOpt.get('data_root'))
+    OUTPUT_Sigma = getPath('pipe', 'q', data_root=dataOpt.get('data_root'))
 
     ntrain = 1000
     ntest = 200
@@ -841,10 +861,12 @@ def getNavierDataLoader(dataPath, r, ntrain, ntest, T_in, T, batch_size, device,
         test_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(test_a, test_u), batch_size=batch_size, shuffle=False)
     return train_loader, test_loader
 
-def getSavePath(data, model_name, flag='log'):
+def getSavePath(data, model_name, flag='log', run_root=None, experiment_name=None):
     """Build a timestamped path for saving model logs or parameters.
 
-    Files are stored under a ``./model/`` directory.
+    Files are stored under ``./model/`` by default.  When ``run_root`` or the
+    ``MGNO_RUN_ROOT`` environment variable is set, files are grouped by
+    experiment under that run root.
 
     Args:
         data: Dataset name (used in the filename).
@@ -858,10 +880,27 @@ def getSavePath(data, model_name, flag='log'):
     Raises:
         NameError: If *flag* is not ``'log'`` or ``'para'``.
     """
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename_base = f'{model_name}_{data}_{timestamp}'
+    configured_run_root = run_root or os.environ.get('MGNO_RUN_ROOT')
+    if configured_run_root:
+        experiment = experiment_name or os.environ.get('MGNO_EXPERIMENT_NAME') or _default_experiment_name(data)
+        base_dir = os.path.join(os.path.abspath(os.path.expanduser(configured_run_root)), experiment)
+        if flag == 'log':
+            output_dir = os.path.join(base_dir, 'logs')
+        elif flag == 'para':
+            output_dir = os.path.join(base_dir, 'checkpoints')
+        else:
+            raise NameError('invalid path flag')
+    else:
+        output_dir = os.path.join(os.path.abspath(''), 'model')
+
+    os.makedirs(output_dir, exist_ok=True)
+
     if flag=='log':
-        MODEL_PATH = os.path.join(os.path.abspath(''), 'model/' + model_name + data + str(datetime.now()) + '.log')
+        MODEL_PATH = os.path.join(output_dir, filename_base + '.log')
     elif flag=='para':
-        MODEL_PATH = os.path.join(os.path.abspath(''), 'model/' + model_name + data + str(datetime.now()) + '.pt')
+        MODEL_PATH = os.path.join(output_dir, filename_base + '.pt')
     else:
         raise NameError('invalid path flag')
     return MODEL_PATH

@@ -19,6 +19,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
+import os
 import matplotlib.pyplot as plt
 from utilities3 import (
     getNavierDataSet3, getPath, getSavePath,
@@ -49,7 +50,7 @@ def train(model, model_type, optimizer, scheduler, trainLossFunc,
     model.train()
     for xx, yy in train_loader:
         loss = 0
-        xx, yy = xx.cuda(), yy.cuda()
+        xx, yy = xx.to(dataOpt['device']), yy.to(dataOpt['device'])
         if model_type in ('FNO', 'UNO', 'FFNO', 'MWT', 'LSM'):
             for t in range(0, dataOpt['T'], dataOpt['step']):
                 x = xx[..., t:t + dataOpt['T_in']]
@@ -106,7 +107,7 @@ def train_full_2(model, model_type, optimizer, scheduler, trainLossFunc,
     model.train()
     for xx, yy in train_loader:
         loss = 0
-        # xx, yy = xx.cuda(), yy.cuda()
+        xx, yy = xx.to(dataOpt['device']), yy.to(dataOpt['device'])
         if model_type in ('FNO', 'UNO', 'MWT', 'FFNO', 'LSM'):
             im = model(xx)
             loss += trainLossFunc(im, yy)
@@ -146,7 +147,7 @@ def trainRNNly(model, model_type, optimizer, scheduler, trainLossFunc,
     model.train()
     for xx, yy in train_loader:
         loss = 0
-        xx, yy = xx.cuda(), yy.cuda()
+        xx, yy = xx.to(dataOpt['device']), yy.to(dataOpt['device'])
         if model_type in ('FNO', 'UNO', 'FFNO', 'MWT', 'LSM'):
             for t in range(0, dataOpt['T'], dataOpt['step']):
                 
@@ -205,7 +206,7 @@ def test(model, model_type, trainLossFunc, test_loader, test_l2_full, test_l2_fu
     
     for xx, yy in test_loader:
         loss = 0
-        xx, yy = xx.cuda(), yy.cuda()
+        xx, yy = xx.to(dataOpt['device']), yy.to(dataOpt['device'])
         if model_type in ('FNO', 'UNO', 'MWT', 'FFNO', 'LSM'):
             for t in range(0, dataOpt['T'], dataOpt['step']):
                 y = yy[..., t:t + dataOpt['step']]
@@ -275,16 +276,31 @@ def objective(modelOpt, dataOpt, model_type='MgNO_NS', model_save=True):
         model_type: Model identifier string (default: ``'MgNO_NS'``).
         model_save: Save the trained model to disk.
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    MODEL_PATH = getSavePath(dataOpt['data'], model_type)
-    MODEL_PATH_PARA = getSavePath(dataOpt['data'], model_type, flag='para')
+    device = torch.device(dataOpt.get('device') or ('cuda' if torch.cuda.is_available() else 'cpu'))
+    if device.type == 'cuda':
+        torch.cuda.set_device(device)
+    dataOpt['device'] = device
+    MODEL_PATH = getSavePath(
+        dataOpt['data'], model_type,
+        run_root=dataOpt.get('run_root'),
+        experiment_name=dataOpt.get('experiment_name'),
+    )
+    MODEL_PATH_PARA = getSavePath(
+        dataOpt['data'], model_type, flag='para',
+        run_root=dataOpt.get('run_root'),
+        experiment_name=dataOpt.get('experiment_name'),
+    )
     logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(filename)s %(levelname)s %(message)s',
                     datefmt='%a %d %b %Y %H:%M:%S',
                     filename=MODEL_PATH,
-                    filemode='w')
+                    filemode='w',
+                    force=True)
     logging.getLogger().addHandler(logging.StreamHandler())
     logging.info(model_type)
+    logging.info(f"device={device}")
+    logging.info(f"log_path={MODEL_PATH}")
+    logging.info(f"checkpoint_path={MODEL_PATH_PARA}")
     logging.info(modelOpt)
     logging.info(dataOpt)
     
@@ -323,7 +339,10 @@ def objective(modelOpt, dataOpt, model_type='MgNO_NS', model_save=True):
         trainLossFunc = LpLoss(size_average=False)
     else:
         trainLossFunc = HsLoss(d=2, p=2, k=1, size_average=False, a=[2.,], res=dataOpt['r'], return_freq=False, return_l2=False, truncation=True)
-        trainLossFunc.cuda(device)
+        if device.type == 'cuda':
+            trainLossFunc.cuda(device)
+        else:
+            trainLossFunc.cpu()
     l2loss = LpLoss(size_average=False)   
     trainFun = train_full_2
  
@@ -393,6 +412,11 @@ if __name__ == "__main__":
     parser.add_argument('--padding_mode', type=str, default='circular', help='padding mode')
     parser.add_argument('--mlp_hidden_dim', type=int, default=0)
     parser.add_argument('--bias', action='store_true',)
+    parser.add_argument('--data_root', type=str, default=None, help='root directory containing benchmark data files')
+    parser.add_argument('--run_root', type=str, default=None, help='root directory for logs and checkpoints')
+    parser.add_argument('--experiment_name', type=str, default=None, help='subdirectory name under run_root')
+    parser.add_argument('--device', type=str, default=None, help='torch device, e.g. cuda:1')
+    parser.add_argument('--dry_run', action='store_true', help='parse config and check paths without loading data or training')
     args = parser.parse_args()
     args = vars(args)
 
@@ -401,11 +425,11 @@ if __name__ == "__main__":
             args['num_iteration'][i][j] = int(args['num_iteration'][i][j])
     dataOpt = {}
     dataOpt['data'] = args['data']
-    dataOpt['path'] =  getPath(args['data'], flag=None)#'/ibex/ai/home/liux0t/Xinliang/FMM/data/ns_V1e-3_N5000_T50.mat' #'/ibex/ai/home/liux0t/Xinliang/FMM/data/ns_V1e-4_N10000_T30.mat'#'/ibex/ai/home/liux0t/Xinliang/FMM/data/NavierStokes_V1e-5_N1200_T20.mat' ##
+    dataOpt['path'] =  getPath(args['data'], flag=None, data_root=args['data_root'])#'/ibex/ai/home/liux0t/Xinliang/FMM/data/ns_V1e-3_N5000_T50.mat' #'/ibex/ai/home/liux0t/Xinliang/FMM/data/ns_V1e-4_N10000_T30.mat'#'/ibex/ai/home/liux0t/Xinliang/FMM/data/NavierStokes_V1e-5_N1200_T20.mat' ##
     dataOpt['ntrain'] = 1000
     dataOpt['ntest'] = 100
-    dataOpt['batch_size'] = 50
-    dataOpt['epochs'] = 500
+    dataOpt['batch_size'] = args['batch_size']
+    dataOpt['epochs'] = args['epochs']
     dataOpt['T_in'] = 1
     dataOpt['T_out'] = 1
     dataOpt['T'] = 10
@@ -414,12 +438,16 @@ if __name__ == "__main__":
     dataOpt['sampling'] = 1
     dataOpt['full_train'] = True
     dataOpt['full_train_2'] = True
-    dataOpt['loss_type'] = 'L2'
+    dataOpt['loss_type'] = args['loss_type'].upper()
     dataOpt['GN'] = False
     dataOpt['learning_rate'] = args['lr']
     dataOpt['final_div_factor'] = args['final_div_factor']
     dataOpt['div_factor'] = args['div_factor']
     dataOpt['weight_decay'] = args['weight_decay']
+    dataOpt['data_root'] = args['data_root']
+    dataOpt['run_root'] = args['run_root']
+    dataOpt['experiment_name'] = args['experiment_name']
+    dataOpt['device'] = args['device']
 
     
 
@@ -434,5 +462,22 @@ if __name__ == "__main__":
     modelOpt['output_dim'] = 1
     modelOpt['padding_mode'] = args['padding_mode']
     modelOpt['bias'] = args['bias']
+
+    if args['dry_run']:
+        print('DRY_RUN navier.py')
+        print(f"dataOpt={dataOpt}")
+        print(f"modelOpt={modelOpt}")
+        print(f"data_path={dataOpt['path']} exists={os.path.exists(dataOpt['path'])}")
+        print('log_path=' + getSavePath(
+            args['data'], args['model_type'],
+            run_root=args['run_root'],
+            experiment_name=args['experiment_name'],
+        ))
+        print('checkpoint_path=' + getSavePath(
+            args['data'], args['model_type'], flag='para',
+            run_root=args['run_root'],
+            experiment_name=args['experiment_name'],
+        ))
+        raise SystemExit(0)
 
     navier.objective(modelOpt, dataOpt, model_type=args['model_type'],)

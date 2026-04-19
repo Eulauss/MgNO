@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 from utilities3 import (
     getDarcyDataSet, getHelmDataset, getPipeDataset,
     getOptimizerScheduler, getDataSize, getSavePath,
-    HsLoss, HSloss_d, LpLoss, count_params,
+    getPath, HsLoss, HSloss_d, LpLoss, count_params,
 )
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader, TensorDataset
@@ -61,17 +61,31 @@ def objective(dataOpt, modelOpt, optimizerScheduler_args,
     ################################################################
 
     print(os.path.basename(__file__))
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    MODEL_PATH = getSavePath(dataOpt['data'], model_type)
-    MODEL_PATH_PARA = getSavePath(dataOpt['data'], model_type, flag='para')
+    device = torch.device(dataOpt.get('device') or ('cuda' if torch.cuda.is_available() else 'cpu'))
+    if device.type == 'cuda':
+        torch.cuda.set_device(device)
+    MODEL_PATH = getSavePath(
+        dataOpt['data'], model_type,
+        run_root=dataOpt.get('run_root'),
+        experiment_name=dataOpt.get('experiment_name'),
+    )
+    MODEL_PATH_PARA = getSavePath(
+        dataOpt['data'], model_type, flag='para',
+        run_root=dataOpt.get('run_root'),
+        experiment_name=dataOpt.get('experiment_name'),
+    )
     if log_if:
         logging.basicConfig(level=logging.INFO,
                         format='%(asctime)s %(filename)s %(levelname)s %(message)s',
                         datefmt='%a %d %b %Y %H:%M:%S',
                         filename=MODEL_PATH,
-                        filemode='w')
+                        filemode='w',
+                        force=True)
         logging.getLogger().addHandler(logging.StreamHandler())
         logging.info(model_type)
+        logging.info(f"device={device}")
+        logging.info(f"log_path={MODEL_PATH}")
+        logging.info(f"checkpoint_path={MODEL_PATH_PARA}")
         logging.info(f"dataOpt={dataOpt}")
         logging.info(f"modelOpt={modelOpt}")
         logging.info(f"optimizerScheduler_args={optimizerScheduler_args}")
@@ -121,7 +135,10 @@ def objective(dataOpt, modelOpt, optimizerScheduler_args,
     optimizer, scheduler = getOptimizerScheduler(model.parameters(), **optimizerScheduler_args)
     
     h1loss = HsLoss(d=2, p=2, k=1, size_average=False, res=y_train.size(1),)
-    h1loss.cuda(device)
+    if device.type == 'cuda':
+        h1loss.cuda(device)
+    else:
+        h1loss.cpu()
     if dataOpt['data'] == 'helm':
         h1loss = HSloss_d()
     l2loss = LpLoss(size_average=False)  
@@ -284,6 +301,16 @@ if __name__ == "__main__":
             '--num_iteration', type=int, nargs='+', default=[[1,0], [1,0], [1,0], [1,0], [2,0]], help='number of iterations in each layer')
     parser.add_argument(
             '--padding_mode', type=str, default='zeros', help='padding mode')
+    parser.add_argument(
+            '--data_root', type=str, default=None, help='root directory containing benchmark data files')
+    parser.add_argument(
+            '--run_root', type=str, default=None, help='root directory for logs and checkpoints')
+    parser.add_argument(
+            '--experiment_name', type=str, default=None, help='subdirectory name under run_root')
+    parser.add_argument(
+            '--device', type=str, default=None, help='torch device, e.g. cuda:1')
+    parser.add_argument(
+            '--dry_run', action='store_true', help='parse config and check paths without loading data or training')
   
 
     args = parser.parse_args()
@@ -317,6 +344,10 @@ if __name__ == "__main__":
     dataOpt['loss_weight'] = [2,]
     dataOpt['normalizer_type'] = args['normalizer_type']
     dataOpt['GN'] = args['GN']
+    dataOpt['data_root'] = args['data_root']
+    dataOpt['run_root'] = args['run_root']
+    dataOpt['experiment_name'] = args['experiment_name']
+    dataOpt['device'] = args['device']
     dataOpt = getDataSize(dataOpt)
 
     modelOpt = {}
@@ -338,6 +369,26 @@ if __name__ == "__main__":
     optimizerScheduler_args['epochs'] = args['epochs']
     optimizerScheduler_args['final_div_factor'] = args['final_div_factor']
     optimizerScheduler_args['div_factor'] = 2
+
+    if args['dry_run']:
+        print('DRY_RUN helm.py')
+        print(f"dataOpt={dataOpt}")
+        print(f"modelOpt={modelOpt}")
+        print(f"optimizerScheduler_args={optimizerScheduler_args}")
+        for flag in ['x', 'y']:
+            path = getPath(args['data'], flag, data_root=args['data_root'])
+            print(f"data_path[{flag}]={path} exists={os.path.exists(path)}")
+        print('log_path=' + getSavePath(
+            args['data'], args['model_type'],
+            run_root=args['run_root'],
+            experiment_name=args['experiment_name'],
+        ))
+        print('checkpoint_path=' + getSavePath(
+            args['data'], args['model_type'], flag='para',
+            run_root=args['run_root'],
+            experiment_name=args['experiment_name'],
+        ))
+        raise SystemExit(0)
 
     helm.objective(dataOpt, modelOpt, optimizerScheduler_args, model_type=args['model_type'],
     validate=True, tqdm_disable=True, log_if=True, 
