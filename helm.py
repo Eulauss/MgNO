@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 from utilities3 import (
     getDarcyDataSet, getHelmDataset, getPipeDataset,
     getOptimizerScheduler, getDataSize, getSavePath,
-    getPath, HsLoss, HSloss_d, LpLoss, count_params,
+    getPath, HsLoss, HSloss_d, HSloss_d_relative, LpLoss, count_params,
 )
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader, TensorDataset
@@ -140,7 +140,10 @@ def objective(dataOpt, modelOpt, optimizerScheduler_args,
     else:
         h1loss.cpu()
     if dataOpt['data'] == 'helm':
-        h1loss = HSloss_d()
+        if dataOpt.get('helm_h1_loss', 'relative') == 'absolute':
+            h1loss = HSloss_d()
+        else:
+            h1loss = HSloss_d_relative()
     l2loss = LpLoss(size_average=False)  
     ############################
     def train(train_loader):
@@ -311,6 +314,9 @@ if __name__ == "__main__":
             '--device', type=str, default=None, help='torch device, e.g. cuda:1')
     parser.add_argument(
             '--dry_run', action='store_true', help='parse config and check paths without loading data or training')
+    parser.add_argument(
+            '--helm_h1_loss', type=str, default='relative', choices=['relative', 'absolute'],
+            help='Helmholtz finite-difference H1 loss: relative for paper-style reporting, absolute for legacy logs')
   
 
     args = parser.parse_args()
@@ -348,6 +354,7 @@ if __name__ == "__main__":
     dataOpt['run_root'] = args['run_root']
     dataOpt['experiment_name'] = args['experiment_name']
     dataOpt['device'] = args['device']
+    dataOpt['helm_h1_loss'] = args['helm_h1_loss']
     dataOpt = getDataSize(dataOpt)
 
     modelOpt = {}

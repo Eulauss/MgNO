@@ -356,6 +356,37 @@ class HSloss_d(nn.MSELoss):
         loss = torch.mean(torch.sqrt(torch.sum(agg, dim=(-2, -1))))  
         return loss, torch.zeros(1), torch.zeros(x.size(0)), torch.zeros(x.size(0))
 
+
+class HSloss_d_relative(nn.MSELoss):
+    def __init__(self, reduction='sum', l2_weight=10.0, eps=1e-12):
+        super().__init__(reduction=reduction)
+        self.l2_weight = l2_weight
+        self.eps = eps
+
+    def forward(self, x, y):
+        temp = x - y
+        z0, z1 = torch.gradient(temp, dim=(-2, -1), spacing=1/x.size(-1))
+        yg0, yg1 = torch.gradient(y, dim=(-2, -1), spacing=1/y.size(-1))
+        numerator = torch.sqrt(torch.sum(
+            self.l2_weight*temp**2 + z0**2 + z1**2,
+            dim=(-2, -1),
+        ))
+        denominator = torch.sqrt(torch.sum(
+            self.l2_weight*y**2 + yg0**2 + yg1**2,
+            dim=(-2, -1),
+        )).clamp_min(self.eps)
+        loss = numerator / denominator
+        if self.reduction == 'mean':
+            loss = torch.mean(loss)
+        elif self.reduction == 'sum':
+            loss = torch.sum(loss)
+        return (
+            loss,
+            torch.zeros(1, device=x.device),
+            torch.zeros(x.size(0), device=x.device),
+            torch.zeros(x.size(0), device=x.device),
+        )
+
 class HSloss_d_2(nn.MSELoss):
     def __init__(self, reduction='sum'):
         super().__init__(reduction=reduction)
